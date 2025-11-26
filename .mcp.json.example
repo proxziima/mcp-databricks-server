@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "/path/to/your/.venv/bin/python",
+      "args": ["/path/to/your/main.py"],
+      "env": {
+        "DATABRICKS_HOST": "your-workspace.cloud.databricks.com",
+        "DATABRICKS_TOKEN": "your-databricks-token-here",
+        "DATABRICKS_SQL_WAREHOUSE_ID": "your-warehouse-id-here"
+      }
+    }
+  }
+}
