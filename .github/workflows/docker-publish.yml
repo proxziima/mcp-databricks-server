@@ -1,0 +1,27 @@
+name: Build and Push to GHCR
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: # Enables manual execution
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: |
+          IMAGE=ghcr.io/${{ secrets.GHCR_USERNAME }}/mcp-databricks-server:latest
+          docker build -t $IMAGE .
+
+      - name: Push Docker image
+        run: |
+          IMAGE=ghcr.io/${{ secrets.GHCR_USERNAME }}/mcp-databricks-server:latest
+          docker push $IMAGE
