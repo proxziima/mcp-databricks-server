@@ -1,0 +1,3609 @@
+Directory structure:
+└── supercorp-ai-supergateway/
+    ├── README.md
+    ├── AGENTS.md
+    ├── docker-bake.hcl
+    ├── LICENSE
+    ├── package.json
+    ├── tsconfig.build.json
+    ├── tsconfig.json
+    ├── tsconfig.test.json
+    ├── .prettierignore
+    ├── .prettierrc
+    ├── docker/
+    │   ├── base.Dockerfile
+    │   ├── deno.Dockerfile
+    │   └── uvx.Dockerfile
+    ├── src/
+    │   ├── index.ts
+    │   ├── types.ts
+    │   ├── gateways/
+    │   │   ├── sseToStdio.ts
+    │   │   ├── stdioToSse.ts
+    │   │   ├── stdioToStatefulStreamableHttp.ts
+    │   │   ├── stdioToStatelessStreamableHttp.ts
+    │   │   ├── stdioToWs.ts
+    │   │   └── streamableHttpToStdio.ts
+    │   ├── lib/
+    │   │   ├── corsOrigin.ts
+    │   │   ├── getLogger.ts
+    │   │   ├── getVersion.ts
+    │   │   ├── headers.ts
+    │   │   ├── onSignals.ts
+    │   │   ├── serializeCorsOrigin.ts
+    │   │   └── sessionAccessCounter.ts
+    │   └── server/
+    │       └── websocket.ts
+    ├── tests/
+    │   ├── baseUrl.test.ts
+    │   ├── concurrency.test.ts
+    │   ├── protocolVersion.test.ts
+    │   ├── stdioToStatefulStreamableHttp.test.ts
+    │   ├── stdioToStatelessStreamableHttp.test.ts
+    │   ├── streamableHttpCli.test.ts
+    │   ├── streamableHttpToStdio.test.ts
+    │   └── helpers/
+    │       └── mock-mcp-server.js
+    ├── .github/
+    │   └── workflows/
+    │       └── docker-publish.yaml
+    └── .husky/
+        └── pre-commit
+
+================================================
+FILE: README.md
+================================================
+![Supergateway: Run stdio MCP servers over SSE and WS](https://raw.githubusercontent.com/supercorp-ai/supergateway/main/supergateway.png)
+
+**Supergateway** runs **MCP stdio-based servers** over **SSE (Server-Sent Events)** or **WebSockets (WS)** with one command. This is useful for remote access, debugging, or connecting to clients when your MCP server only supports stdio.
+
+Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterface](https://superinterface.ai), and [Supercorp](https://supercorp.ai).
+
+## Installation & Usage
+
+Run Supergateway via `npx`:
+
+```bash
+npx -y supergateway --stdio "uvx mcp-server-git"
+```
+
+- **`--stdio "command"`**: Command that runs an MCP server over stdio
+- **`--sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"`**: SSE URL to connect to (SSE→stdio mode)
+- **`--streamableHttp "https://mcp-server.example.com/mcp"`**: Streamable HTTP URL to connect to (StreamableHttp→stdio mode)
+- **`--outputTransport stdio | sse | ws | streamableHttp`**: Output MCP transport (default: `sse` with `--stdio`, `stdio` with `--sse` or `--streamableHttp`)
+- **`--port 8000`**: Port to listen on (stdio→SSE or stdio→WS mode, default: `8000`)
+- **`--baseUrl "http://localhost:8000"`**: Base URL for SSE or WS clients (stdio→SSE mode; optional)
+- **`--ssePath "/sse"`**: Path for SSE subscriptions (stdio→SSE mode, default: `/sse`)
+- **`--messagePath "/message"`**: Path for messages (stdio→SSE or stdio→WS mode, default: `/message`)
+- **`--streamableHttpPath "/mcp"`**: Path for Streamable HTTP (stdio→Streamable HTTP mode, default: `/mcp`)
+- **`--stateful`**: Run stdio→Streamable HTTP in stateful mode
+- **`--sessionTimeout 60000`**: Session timeout in milliseconds (stateful stdio→Streamable HTTP mode only)
+- **`--header "x-user-id: 123"`**: Add one or more headers (stdio→SSE, SSE→stdio, or Streamable HTTP→stdio mode; can be used multiple times)
+- **`--oauth2Bearer "some-access-token"`**: Adds an `Authorization` header with the provided Bearer token
+- **`--logLevel debug | info | none`**: Controls logging level (default: `info`). Use `debug` for more verbose logs, `none` to suppress all logs.
+- **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
+- **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
+
+## stdio → SSE
+
+Expose an MCP stdio server as an SSE server:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --port 8000 --baseUrl http://localhost:8000 \
+    --ssePath /sse --messagePath /message
+```
+
+- **Subscribe to events**: `GET http://localhost:8000/sse`
+- **Send messages**: `POST http://localhost:8000/message`
+
+## SSE → stdio
+
+Connect to a remote SSE server and expose locally via stdio:
+
+```bash
+npx -y supergateway --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+```
+
+Useful for integrating remote SSE MCP servers into local command-line environments.
+
+You can also pass headers when sending requests. This is useful for authentication:
+
+```bash
+npx -y supergateway \
+    --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app" \
+    --oauth2Bearer "some-access-token" \
+    --header "X-My-Header: another-header-value"
+```
+
+## Streamable HTTP → stdio
+
+Connect to a remote Streamable HTTP server and expose locally via stdio:
+
+```bash
+npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
+```
+
+This mode is useful for connecting to MCP servers that use the newer Streamable HTTP transport protocol. Like SSE mode, you can also pass headers for authentication:
+
+```bash
+npx -y supergateway \
+    --streamableHttp "https://mcp-server.example.com/mcp" \
+    --oauth2Bearer "some-access-token" \
+    --header "X-My-Header: another-header-value"
+```
+
+## stdio → Streamable HTTP
+
+Expose an MCP stdio server as a Streamable HTTP server.
+
+### Stateless mode
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --outputTransport streamableHttp \
+    --port 8000
+```
+
+### Stateful mode
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --outputTransport streamableHttp --stateful \
+    --sessionTimeout 60000 --port 8000
+```
+
+The Streamable HTTP endpoint defaults to `http://localhost:8000/mcp` (configurable via `--streamableHttpPath`).
+
+## stdio → WS
+
+Expose an MCP stdio server as a WebSocket server:
+
+```bash
+npx -y supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --port 8000 --outputTransport ws --messagePath /message
+```
+
+- **WebSocket endpoint**: `ws://localhost:8000/message`
+
+## Example with MCP Inspector (stdio → SSE mode)
+
+1. **Run Supergateway**:
+
+```bash
+npx -y supergateway --port 8000 \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem /Users/MyName/Desktop"
+```
+
+2. **Use MCP Inspector**:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+You can now list tools, resources, or perform MCP actions via Supergateway.
+
+## Using with ngrok
+
+Use [ngrok](https://ngrok.com/) to share your local MCP server publicly:
+
+```bash
+npx -y supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-filesystem ."
+
+# In another terminal:
+ngrok http 8000
+```
+
+ngrok provides a public URL for remote access.
+
+MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
+
+## Running with Docker
+
+A Docker-based workflow avoids local Node.js setup. A ready-to-run Docker image is available here:
+[supercorp/supergateway](https://hub.docker.com/r/supercorp/supergateway). Also on GHCR: [ghcr.io/supercorp-ai/supergateway](https://github.com/supercorp-ai/supergateway/pkgs/container/supergateway)
+
+### Using the Official Image
+
+```bash
+docker run -it --rm -p 8000:8000 supercorp/supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
+    --port 8000
+```
+
+Docker pulls the image automatically. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
+
+#### Images with dependencies
+
+Pull any of these pre-built Supergateway images for various dependencies you might need.
+
+- **uvx**
+  Supergateway + uv/uvx, so you can call `uvx` directly:
+
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:uvx \
+    --stdio "uvx mcp-server-fetch"
+  ```
+
+- **deno**
+  Supergateway + Deno, ready to run Deno-based MCP servers:
+  ```bash
+  docker run -it --rm -p 8000:8000 supercorp/supergateway:deno \
+    --stdio "deno run -A jsr:@omedia/mcp-server-drupal --drupal-url https://your-drupal-server.com"
+  ```
+
+### Building the Image Yourself
+
+Use provided Dockerfile:
+
+```bash
+docker build -f docker/base.Dockerfile -t supergateway .
+
+docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
+```
+
+## Using with Claude Desktop (SSE → stdio mode)
+
+Claude Desktop can use Supergateway’s SSE→stdio mode.
+
+### NPX-based MCP Server Example
+
+```json
+{
+  "mcpServers": {
+    "supermachineExampleNpx": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--sse",
+        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+      ]
+    }
+  }
+}
+```
+
+### Docker-based MCP Server Example
+
+```json
+{
+  "mcpServers": {
+    "supermachineExampleDocker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "supercorp/supergateway",
+        "--sse",
+        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+      ]
+    }
+  }
+}
+```
+
+## Using with Cursor (SSE → stdio mode)
+
+Cursor can also integrate with Supergateway in SSE→stdio mode. The configuration is similar to Claude Desktop.
+
+### NPX-based MCP Server Example for Cursor
+
+```json
+{
+  "mcpServers": {
+    "cursorExampleNpx": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--sse",
+        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+      ]
+    }
+  }
+}
+```
+
+### Docker-based MCP Server Example for Cursor
+
+```json
+{
+  "mcpServers": {
+    "cursorExampleDocker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "supercorp/supergateway",
+        "--sse",
+        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+      ]
+    }
+  }
+}
+```
+
+**Note:** Although the setup supports sending headers via the `--header` flag, if you need to pass an Authorization header (which typically includes a space, e.g. `"Bearer 123"`), you must use the `--oauth2Bearer` flag due to a known Cursor bug with spaces in command-line arguments.
+
+## Why MCP?
+
+[Model Context Protocol](https://spec.modelcontextprotocol.io/) standardizes AI tool interactions. Supergateway converts MCP stdio servers into SSE or WS services, simplifying integration and debugging with web-based or remote clients.
+
+## Advanced Configuration
+
+Supergateway emphasizes modularity:
+
+- Automatically manages JSON-RPC versioning.
+- Retransmits package metadata where possible.
+- stdio→SSE or stdio→WS mode logs via standard output; SSE→stdio mode logs via stderr.
+
+## Additional resources
+
+- [Superargs](https://github.com/supercorp-ai/superargs) - provide arguments to MCP servers during runtime.
+
+## Contributors
+
+- [@longfin](https://github.com/longfin)
+- [@griffinqiu](https://github.com/griffinqiu)
+- [@folkvir](https://github.com/folkvir)
+- [@wizizm](https://github.com/wizizm)
+- [@dtinth](https://github.com/dtinth)
+- [@rajivml](https://github.com/rajivml)
+- [@NicoBonaminio](https://github.com/NicoBonaminio)
+- [@sibbl](https://github.com/sibbl)
+- [@podarok](https://github.com/podarok)
+- [@jmn8718](https://github.com/jmn8718)
+- [@TraceIvan](https://github.com/TraceIvan)
+- [@zhoufei0622](https://github.com/zhoufei0622)
+- [@ezyang](https://github.com/ezyang)
+- [@aleksadvaisly](https://github.com/aleksadvaisly)
+- [@wuzhuoquan](https://github.com/wuzhuoquan)
+- [@mantrakp04](https://github.com/mantrakp04)
+- [@mheubi](https://github.com/mheubi)
+- [@mjmendo](https://github.com/mjmendo)
+- [@CyanMystery](https://github.com/CyanMystery)
+- [@earonesty](https://github.com/earonesty)
+- [@StefanBurscher](https://github.com/StefanBurscher)
+- [@tarasyarema](https://github.com/tarasyarema)
+- [@pcnfernando](https://github.com/pcnfernando)
+- [@Areo-Joe](https://github.com/Areo-Joe)
+- [@Joffref](https://github.com/Joffref)
+- [@michaeljguarino](https://github.com/michaeljguarino)
+
+## Contributing
+
+Issues and PRs welcome. Please open one if you encounter problems or have feature suggestions.
+
+## Tests
+
+Supergateway is tested with the Node Test Runner.
+
+To run the suite locally you need Node **24+**. Using [nvm](https://github.com/nvm-sh/nvm) you can install and activate it with:
+
+```bash
+nvm install 24
+nvm use 24
+npm install
+npm run build
+npm test
+```
+
+The `tests/helpers/mock-mcp-server.js` script provides a local MCP server so all
+tests run without network access.
+
+## License
+
+[MIT License](./LICENSE)
+
+
+
+================================================
+FILE: AGENTS.md
+================================================
+## Setup
+
+Install Node.js v24 using nvm. After checking out the repository, run:
+
+```bash
+nvm install 24
+nvm use 24
+npm install
+
+# Build
+
+Compile the TypeScript sources before running tests:
+
+npm run build
+```
+
+## Running tests
+
+Run the test suite with Node's test runner and ts-node to enable mocks:
+
+```bash
+npm run test
+```
+
+The `tests/helpers/mock-mcp-server.js` script provides a lightweight local MCP
+server used during tests so everything runs offline. All tests should pass
+without external downloads.
+
+If network-dependent commands (like `npx -y @modelcontextprotocol/server-*`) fail, check network access.
+
+
+
+================================================
+FILE: docker-bake.hcl
+================================================
+variable "VERSION" {
+  default = "DEV"
+}
+
+target "common" {
+  context   = "."
+  platforms = ["linux/amd64", "linux/arm64"]
+}
+
+group "default" {
+  targets = ["base", "uvx", "deno"]
+}
+
+target "base" {
+  inherits   = ["common"]
+  dockerfile = "docker/base.Dockerfile"
+  tags = [
+    "supercorp/supergateway:latest",
+    "supercorp/supergateway:base",
+    "supercorp/supergateway:${VERSION}",
+    "ghcr.io/supercorp-ai/supergateway:latest",
+    "ghcr.io/supercorp-ai/supergateway:base",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}"
+  ]
+}
+
+target "uvx" {
+  inherits   = ["common"]
+  depends_on  = ["base"]
+  dockerfile = "docker/uvx.Dockerfile"
+  contexts = { base = "target:base" }
+  tags = [
+    "supercorp/supergateway:uvx",
+    "supercorp/supergateway:${VERSION}-uvx",
+    "ghcr.io/supercorp-ai/supergateway:uvx",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-uvx"
+  ]
+}
+
+target "deno" {
+  inherits   = ["common"]
+  depends_on  = ["base"]
+  dockerfile = "docker/deno.Dockerfile"
+  contexts = { base = "target:base" }
+  tags = [
+    "supercorp/supergateway:deno",
+    "supercorp/supergateway:${VERSION}-deno",
+    "ghcr.io/supercorp-ai/supergateway:deno",
+    "ghcr.io/supercorp-ai/supergateway:${VERSION}-deno"
+  ]
+}
+
+
+
+================================================
+FILE: LICENSE
+================================================
+MIT License
+
+Copyright (c) 2024 Supercorp
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+================================================
+FILE: package.json
+================================================
+{
+  "name": "supergateway",
+  "version": "3.4.3",
+  "description": "Run MCP stdio servers over SSE, Streamable HTTP or visa versa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supercorp-ai/supergateway.git"
+  },
+  "keywords": [
+    "mcp",
+    "stdio",
+    "sse",
+    "gateway",
+    "proxy",
+    "bridge"
+  ],
+  "type": "module",
+  "bin": {
+    "supergateway": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "format": "prettier --write 'src/**/*.ts' '*.json' '.prettierrc'",
+    "format:check": "prettier --check 'src/**/*.ts' '*.json' '.prettierrc'",
+    "test": "node --test --test-concurrency=1 --experimental-loader ts-node/esm --experimental-test-module-mocks tests/**/*.test.ts",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "**/*": "prettier --write --ignore-unknown"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.2",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.2",
+    "yargs": "^17.7.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/body-parser": "^1.19.5",
+    "prev-modelcontextprotocol-sdk": "npm:@modelcontextprotocol/sdk@1.4.0",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.18",
+    "@types/ws": "^8.18.1",
+    "@types/yargs": "^17.0.33",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.0.0",
+    "prettier": "^3.5.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
+
+
+
+================================================
+FILE: tsconfig.build.json
+================================================
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"]
+}
+
+
+
+================================================
+FILE: tsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist"
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}
+
+
+
+================================================
+FILE: tsconfig.test.json
+================================================
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "dist-tests",
+    "types": ["node"],
+    "noEmitOnError": false
+  },
+  "include": ["tests/**/*.ts"]
+}
+
+
+
+================================================
+FILE: .prettierignore
+================================================
+dist
+node_modules
+.git
+.github
+package-lock.json
+.DS_Store
+**/.hermit/**
+**/cache/**
+
+
+
+================================================
+FILE: .prettierrc
+================================================
+{
+  "semi": false,
+  "singleQuote": true,
+  "singleAttributePerLine": true
+}
+
+
+
+================================================
+FILE: docker/base.Dockerfile
+================================================
+FROM node:20-alpine
+
+RUN npm install -g supergateway
+
+EXPOSE 8000
+
+ENTRYPOINT ["supergateway"]
+
+CMD ["--help"]
+
+
+
+================================================
+FILE: docker/deno.Dockerfile
+================================================
+FROM base
+RUN curl -fsSL https://deno.land/install.sh | sh
+
+
+
+================================================
+FILE: docker/uvx.Dockerfile
+================================================
+FROM base
+RUN apk add --no-cache python3 coreutils
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+
+
+================================================
+FILE: src/index.ts
+================================================
+#!/usr/bin/env node
+/**
+ * index.ts
+ *
+ * Run MCP stdio servers over SSE, convert between stdio, SSE, WS.
+ *
+ * Usage:
+ *   # stdio→SSE
+ *   npx -y supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
+ *                       --port 8000 --baseUrl http://localhost:8000 --ssePath /sse --messagePath /message
+ *
+ *   # SSE→stdio
+ *   npx -y supergateway --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+ *
+ *   # stdio→WS
+ *   npx -y supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem /" --outputTransport ws
+ *
+ *   # Streamable HTTP→stdio
+ *   npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
+ */
+
+import yargs from 'yargs'
+import { hideBin } from 'yargs/helpers'
+import { stdioToSse } from './gateways/stdioToSse.js'
+import { sseToStdio } from './gateways/sseToStdio.js'
+import { stdioToWs } from './gateways/stdioToWs.js'
+import { streamableHttpToStdio } from './gateways/streamableHttpToStdio.js'
+import { headers } from './lib/headers.js'
+import { corsOrigin } from './lib/corsOrigin.js'
+import { getLogger } from './lib/getLogger.js'
+import { stdioToStatelessStreamableHttp } from './gateways/stdioToStatelessStreamableHttp.js'
+import { stdioToStatefulStreamableHttp } from './gateways/stdioToStatefulStreamableHttp.js'
+
+async function main() {
+  const argv = yargs(hideBin(process.argv))
+    .option('stdio', {
+      type: 'string',
+      description: 'Command to run an MCP server over Stdio',
+    })
+    .option('sse', {
+      type: 'string',
+      description: 'SSE URL to connect to',
+    })
+    .option('streamableHttp', {
+      type: 'string',
+      description: 'Streamable HTTP URL to connect to',
+    })
+    .option('outputTransport', {
+      type: 'string',
+      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
+      default: () => {
+        const args = hideBin(process.argv)
+
+        if (args.includes('--stdio')) return 'sse'
+        if (args.includes('--sse')) return 'stdio'
+        if (args.includes('--streamableHttp')) return 'stdio'
+
+        return undefined
+      },
+      description:
+        'Transport for output. Default is "sse" when using --stdio and "stdio" when using --sse or --streamableHttp.',
+    })
+    .option('port', {
+      type: 'number',
+      default: 8000,
+      description: '(stdio→SSE, stdio→WS) Port for output MCP server',
+    })
+    .option('baseUrl', {
+      type: 'string',
+      default: '',
+      description: '(stdio→SSE) Base URL for output MCP server',
+    })
+    .option('ssePath', {
+      type: 'string',
+      default: '/sse',
+      description: '(stdio→SSE) Path for SSE subscriptions',
+    })
+    .option('messagePath', {
+      type: 'string',
+      default: '/message',
+      description: '(stdio→SSE, stdio→WS) Path for messages',
+    })
+    .option('streamableHttpPath', {
+      type: 'string',
+      default: '/mcp',
+      description: '(stdio→StreamableHttp) Path for StreamableHttp',
+    })
+    .option('logLevel', {
+      choices: ['debug', 'info', 'none'] as const,
+      default: 'info',
+      description: 'Logging level',
+    })
+    .option('cors', {
+      type: 'array',
+      description:
+        'Enable CORS. Use --cors with no values to allow all origins, or supply one or more allowed origins (e.g. --cors "http://example.com" or --cors "/example\\.com$/" for regex matching).',
+    })
+    .option('healthEndpoint', {
+      type: 'array',
+      default: [],
+      description:
+        'One or more endpoints returning "ok", e.g. --healthEndpoint /healthz --healthEndpoint /readyz',
+    })
+    .option('header', {
+      type: 'array',
+      default: [],
+      description:
+        'Headers to be added to the request headers, e.g. --header "x-user-id: 123"',
+    })
+    .option('oauth2Bearer', {
+      type: 'string',
+      description:
+        'Authorization header to be added, e.g. --oauth2Bearer "some-access-token" adds "Authorization: Bearer some-access-token"',
+    })
+    .option('stateful', {
+      type: 'boolean',
+      default: false,
+      description:
+        'Whether the server is stateful. Only supported for stdio→StreamableHttp.',
+    })
+    .option('sessionTimeout', {
+      type: 'number',
+      description:
+        'Session timeout in milliseconds. Only supported for stateful stdio→StreamableHttp. If not set, the session will only be deleted when client transport explicitly terminates the session.',
+    })
+    .option('protocolVersion', {
+      type: 'string',
+      description:
+        'MCP protocol version to use for auto-initialization. Defaults to "2024-11-05" if not specified.',
+      default: '2024-11-05',
+    })
+    .help()
+    .parseSync()
+
+  const hasStdio = Boolean(argv.stdio)
+  const hasSse = Boolean(argv.sse)
+  const hasStreamableHttp = Boolean(argv.streamableHttp)
+
+  const activeCount = [hasStdio, hasSse, hasStreamableHttp].filter(
+    Boolean,
+  ).length
+
+  const logger = getLogger({
+    logLevel: argv.logLevel,
+    outputTransport: argv.outputTransport as string,
+  })
+
+  if (activeCount === 0) {
+    logger.error(
+      'Error: You must specify one of --stdio, --sse, or --streamableHttp',
+    )
+    process.exit(1)
+  } else if (activeCount > 1) {
+    logger.error(
+      'Error: Specify only one of --stdio, --sse, or --streamableHttp, not multiple',
+    )
+    process.exit(1)
+  }
+
+  logger.info('Starting...')
+  logger.info(
+    'Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai',
+  )
+  logger.info(`  - outputTransport: ${argv.outputTransport}`)
+
+  try {
+    if (hasStdio) {
+      if (argv.outputTransport === 'sse') {
+        await stdioToSse({
+          stdioCmd: argv.stdio!,
+          port: argv.port,
+          baseUrl: argv.baseUrl,
+          ssePath: argv.ssePath,
+          messagePath: argv.messagePath,
+          logger,
+          corsOrigin: corsOrigin({ argv }),
+          healthEndpoints: argv.healthEndpoint as string[],
+          headers: headers({
+            argv,
+            logger,
+          }),
+        })
+      } else if (argv.outputTransport === 'ws') {
+        await stdioToWs({
+          stdioCmd: argv.stdio!,
+          port: argv.port,
+          messagePath: argv.messagePath,
+          logger,
+          corsOrigin: corsOrigin({ argv }),
+          healthEndpoints: argv.healthEndpoint as string[],
+        })
+      } else if (argv.outputTransport === 'streamableHttp') {
+        const stateful = argv.stateful
+        if (stateful) {
+          logger.info('Running stateful server')
+
+          let sessionTimeout: null | number
+          if (typeof argv.sessionTimeout === 'number') {
+            if (argv.sessionTimeout <= 0) {
+              logger.error(
+                `Error: \`sessionTimeout\` must be a positive number, received: ${argv.sessionTimeout}`,
+              )
+              process.exit(1)
+            }
+
+            sessionTimeout = argv.sessionTimeout
+          } else {
+            sessionTimeout = null
+          }
+
+          await stdioToStatefulStreamableHttp({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHttpPath: argv.streamableHttpPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+            sessionTimeout,
+          })
+        } else {
+          logger.info('Running stateless server')
+
+          await stdioToStatelessStreamableHttp({
+            stdioCmd: argv.stdio!,
+            port: argv.port,
+            streamableHttpPath: argv.streamableHttpPath,
+            logger,
+            corsOrigin: corsOrigin({ argv }),
+            healthEndpoints: argv.healthEndpoint as string[],
+            headers: headers({
+              argv,
+              logger,
+            }),
+            protocolVersion: argv.protocolVersion,
+          })
+        }
+      } else {
+        logger.error(`Error: stdio→${argv.outputTransport} not supported`)
+        process.exit(1)
+      }
+    } else if (hasSse) {
+      if (argv.outputTransport === 'stdio') {
+        await sseToStdio({
+          sseUrl: argv.sse!,
+          logger,
+          headers: headers({
+            argv,
+            logger,
+          }),
+        })
+      } else {
+        logger.error(`Error: sse→${argv.outputTransport} not supported`)
+        process.exit(1)
+      }
+    } else if (hasStreamableHttp) {
+      if (argv.outputTransport === 'stdio') {
+        await streamableHttpToStdio({
+          streamableHttpUrl: argv.streamableHttp!,
+          logger,
+          headers: headers({
+            argv,
+            logger,
+          }),
+        })
+      } else {
+        logger.error(
+          `Error: streamableHttp→${argv.outputTransport} not supported`,
+        )
+        process.exit(1)
+      }
+    } else {
+      logger.error('Error: Invalid input transport')
+      process.exit(1)
+    }
+  } catch (err) {
+    logger.error('Fatal error:', err)
+    process.exit(1)
+  }
+}
+
+main()
+
+
+
+================================================
+FILE: src/types.ts
+================================================
+export interface Logger {
+  info: (...args: any[]) => void
+  error: (...args: any[]) => void
+}
+
+
+
+================================================
+FILE: src/gateways/sseToStdio.ts
+================================================
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type {
+  JSONRPCMessage,
+  JSONRPCRequest,
+  ClientCapabilities,
+  Implementation,
+} from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
+import { getVersion } from '../lib/getVersion.js'
+import { Logger } from '../types.js'
+import { onSignals } from '../lib/onSignals.js'
+
+export interface SseToStdioArgs {
+  sseUrl: string
+  logger: Logger
+  headers: Record<string, string>
+}
+
+let sseClient: Client | undefined
+
+const newInitializeSseClient = ({ message }: { message: JSONRPCRequest }) => {
+  const clientInfo = message.params?.clientInfo as Implementation | undefined
+  const clientCapabilities = message.params?.capabilities as
+    | ClientCapabilities
+    | undefined
+
+  return new Client(
+    {
+      name: clientInfo?.name ?? 'supergateway',
+      version: clientInfo?.version ?? getVersion(),
+    },
+    {
+      capabilities: clientCapabilities ?? {},
+    },
+  )
+}
+
+const newFallbackSseClient = async ({
+  sseTransport,
+}: {
+  sseTransport: SSEClientTransport
+}) => {
+  const fallbackSseClient = new Client(
+    {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+    {
+      capabilities: {},
+    },
+  )
+
+  await fallbackSseClient.connect(sseTransport)
+  return fallbackSseClient
+}
+
+export async function sseToStdio(args: SseToStdioArgs) {
+  const { sseUrl, logger, headers } = args
+
+  logger.info(`  - sse: ${sseUrl}`)
+  logger.info(
+    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
+  )
+  logger.info('Connecting to SSE...')
+
+  onSignals({ logger })
+
+  const sseTransport = new SSEClientTransport(new URL(sseUrl), {
+    eventSourceInit: {
+      fetch: (...props: Parameters<typeof fetch>) => {
+        const [url, init = {}] = props
+        return fetch(url, { ...init, headers: { ...init.headers, ...headers } })
+      },
+    },
+    requestInit: {
+      headers,
+    },
+  })
+
+  sseTransport.onerror = (err) => {
+    logger.error('SSE error:', err)
+  }
+
+  sseTransport.onclose = () => {
+    logger.error('SSE connection closed')
+    process.exit(1)
+  }
+
+  const stdioServer = new Server(
+    {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+    {
+      capabilities: {},
+    },
+  )
+
+  const stdioTransport = new StdioServerTransport()
+  await stdioServer.connect(stdioTransport)
+
+  const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
+    jsonrpc: req.jsonrpc || '2.0',
+    id: req.id,
+    ...payload,
+  })
+
+  stdioServer.transport!.onmessage = async (message: JSONRPCMessage) => {
+    const isRequest = 'method' in message && 'id' in message
+    if (isRequest) {
+      logger.info('Stdio → SSE:', message)
+      const req = message as JSONRPCRequest
+      let result
+
+      try {
+        if (!sseClient) {
+          if (message.method === 'initialize') {
+            sseClient = newInitializeSseClient({
+              message,
+            })
+
+            const originalRequest = sseClient.request
+
+            sseClient.request = async function (requestMessage, ...restArgs) {
+              // pass protocol version from original client
+              if (
+                requestMessage.method === 'initialize' &&
+                message.params?.protocolVersion &&
+                requestMessage.params?.protocolVersion
+              ) {
+                requestMessage.params.protocolVersion =
+                  message.params.protocolVersion
+              }
+
+              result = await originalRequest.apply(this, [
+                requestMessage,
+                ...restArgs,
+              ])
+
+              return result
+            }
+
+            await sseClient.connect(sseTransport)
+            sseClient.request = originalRequest
+          } else {
+            logger.info('SSE client not initialized, creating fallback client')
+            sseClient = await newFallbackSseClient({ sseTransport })
+          }
+
+          logger.info('SSE connected')
+        } else {
+          result = await sseClient.request(req, z.any())
+        }
+      } catch (err) {
+        logger.error('Request error:', err)
+        const errorCode =
+          err && typeof err === 'object' && 'code' in err
+            ? (err as any).code
+            : -32000
+        let errorMsg =
+          err && typeof err === 'object' && 'message' in err
+            ? (err as any).message
+            : 'Internal error'
+        const prefix = `MCP error ${errorCode}:`
+        if (errorMsg.startsWith(prefix)) {
+          errorMsg = errorMsg.slice(prefix.length).trim()
+        }
+        const errorResp = wrapResponse(req, {
+          error: {
+            code: errorCode,
+            message: errorMsg,
+          },
+        })
+        process.stdout.write(JSON.stringify(errorResp) + '\n')
+        return
+      }
+      const response = wrapResponse(
+        req,
+        result.hasOwnProperty('error')
+          ? { error: { ...result.error } }
+          : { result: { ...result } },
+      )
+      logger.info('Response:', response)
+      process.stdout.write(JSON.stringify(response) + '\n')
+    } else {
+      logger.info('SSE → Stdio:', message)
+      process.stdout.write(JSON.stringify(message) + '\n')
+    }
+  }
+
+  logger.info('Stdio server listening')
+}
+
+
+
+================================================
+FILE: src/gateways/stdioToSse.ts
+================================================
+import express from 'express'
+import bodyParser from 'body-parser'
+import cors, { type CorsOptions } from 'cors'
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import { Logger } from '../types.js'
+import { getVersion } from '../lib/getVersion.js'
+import { onSignals } from '../lib/onSignals.js'
+import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+
+export interface StdioToSseArgs {
+  stdioCmd: string
+  port: number
+  baseUrl: string
+  ssePath: string
+  messagePath: string
+  logger: Logger
+  corsOrigin: CorsOptions['origin']
+  healthEndpoints: string[]
+  headers: Record<string, string>
+}
+
+const setResponseHeaders = ({
+  res,
+  headers,
+}: {
+  res: express.Response
+  headers: Record<string, string>
+}) =>
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value)
+  })
+
+export async function stdioToSse(args: StdioToSseArgs) {
+  const {
+    stdioCmd,
+    port,
+    baseUrl,
+    ssePath,
+    messagePath,
+    logger,
+    corsOrigin,
+    healthEndpoints,
+    headers,
+  } = args
+
+  logger.info(
+    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+  )
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
+  if (baseUrl) {
+    logger.info(`  - baseUrl: ${baseUrl}`)
+  }
+  logger.info(`  - ssePath: ${ssePath}`)
+  logger.info(`  - messagePath: ${messagePath}`)
+
+  logger.info(
+    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
+  )
+  logger.info(
+    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+
+  onSignals({ logger })
+
+  const child: ChildProcessWithoutNullStreams = spawn(stdioCmd, { shell: true })
+  child.on('exit', (code, signal) => {
+    logger.error(`Child exited: code=${code}, signal=${signal}`)
+    process.exit(code ?? 1)
+  })
+
+  const server = new Server(
+    { name: 'supergateway', version: getVersion() },
+    { capabilities: {} },
+  )
+
+  const sessions: Record<
+    string,
+    { transport: SSEServerTransport; response: express.Response }
+  > = {}
+
+  const app = express()
+
+  if (corsOrigin) {
+    app.use(cors({ origin: corsOrigin }))
+  }
+
+  app.use((req, res, next) => {
+    if (req.path === messagePath) return next()
+    return bodyParser.json()(req, res, next)
+  })
+
+  for (const ep of healthEndpoints) {
+    app.get(ep, (_req, res) => {
+      setResponseHeaders({
+        res,
+        headers,
+      })
+      res.send('ok')
+    })
+  }
+
+  app.get(ssePath, async (req, res) => {
+    logger.info(`New SSE connection from ${req.ip}`)
+
+    setResponseHeaders({
+      res,
+      headers,
+    })
+
+    const sseTransport = new SSEServerTransport(`${baseUrl}${messagePath}`, res)
+    await server.connect(sseTransport)
+
+    const sessionId = sseTransport.sessionId
+    if (sessionId) {
+      sessions[sessionId] = { transport: sseTransport, response: res }
+    }
+
+    sseTransport.onmessage = (msg: JSONRPCMessage) => {
+      logger.info(`SSE → Child (session ${sessionId}): ${JSON.stringify(msg)}`)
+      child.stdin.write(JSON.stringify(msg) + '\n')
+    }
+
+    sseTransport.onclose = () => {
+      logger.info(`SSE connection closed (session ${sessionId})`)
+      delete sessions[sessionId]
+    }
+
+    sseTransport.onerror = (err) => {
+      logger.error(`SSE error (session ${sessionId}):`, err)
+      delete sessions[sessionId]
+    }
+
+    req.on('close', () => {
+      logger.info(`Client disconnected (session ${sessionId})`)
+      delete sessions[sessionId]
+    })
+  })
+
+  // @ts-ignore
+  app.post(messagePath, async (req, res) => {
+    const sessionId = req.query.sessionId as string
+
+    setResponseHeaders({
+      res,
+      headers,
+    })
+
+    if (!sessionId) {
+      return res.status(400).send('Missing sessionId parameter')
+    }
+
+    const session = sessions[sessionId]
+    if (session?.transport?.handlePostMessage) {
+      logger.info(`POST to SSE transport (session ${sessionId})`)
+      await session.transport.handlePostMessage(req, res)
+    } else {
+      res.status(503).send(`No active SSE connection for session ${sessionId}`)
+    }
+  })
+
+  app.listen(port, () => {
+    logger.info(`Listening on port ${port}`)
+    logger.info(`SSE endpoint: http://localhost:${port}${ssePath}`)
+    logger.info(`POST messages: http://localhost:${port}${messagePath}`)
+  })
+
+  let buffer = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    buffer += chunk.toString('utf8')
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ''
+    lines.forEach((line) => {
+      if (!line.trim()) return
+      try {
+        const jsonMsg = JSON.parse(line)
+        logger.info('Child → SSE:', jsonMsg)
+        for (const [sid, session] of Object.entries(sessions)) {
+          try {
+            session.transport.send(jsonMsg)
+          } catch (err) {
+            logger.error(`Failed to send to session ${sid}:`, err)
+            delete sessions[sid]
+          }
+        }
+      } catch {
+        logger.error(`Child non-JSON: ${line}`)
+      }
+    })
+  })
+
+  child.stderr.on('data', (chunk: Buffer) => {
+    logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+  })
+}
+
+
+
+================================================
+FILE: src/gateways/stdioToStatefulStreamableHttp.ts
+================================================
+import express from 'express'
+import cors, { type CorsOptions } from 'cors'
+import { spawn } from 'child_process'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import { Logger } from '../types.js'
+import { getVersion } from '../lib/getVersion.js'
+import { onSignals } from '../lib/onSignals.js'
+import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+import { randomUUID } from 'node:crypto'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { SessionAccessCounter } from '../lib/sessionAccessCounter.js'
+
+export interface StdioToStreamableHttpArgs {
+  stdioCmd: string
+  port: number
+  streamableHttpPath: string
+  logger: Logger
+  corsOrigin: CorsOptions['origin']
+  healthEndpoints: string[]
+  headers: Record<string, string>
+  sessionTimeout: number | null
+}
+
+const setResponseHeaders = ({
+  res,
+  headers,
+}: {
+  res: express.Response
+  headers: Record<string, string>
+}) =>
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value)
+  })
+
+export async function stdioToStatefulStreamableHttp(
+  args: StdioToStreamableHttpArgs,
+) {
+  const {
+    stdioCmd,
+    port,
+    streamableHttpPath,
+    logger,
+    corsOrigin,
+    healthEndpoints,
+    headers,
+    sessionTimeout,
+  } = args
+
+  logger.info(
+    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+  )
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
+
+  logger.info(
+    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
+  )
+  logger.info(
+    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+  logger.info(
+    `  - Session timeout: ${sessionTimeout ? `${sessionTimeout}ms` : 'disabled'}`,
+  )
+
+  onSignals({ logger })
+
+  const app = express()
+  app.use(express.json())
+
+  if (corsOrigin) {
+    app.use(
+      cors({
+        origin: corsOrigin,
+        exposedHeaders: ['Mcp-Session-Id'],
+      }),
+    )
+  }
+
+  for (const ep of healthEndpoints) {
+    app.get(ep, (_req, res) => {
+      setResponseHeaders({
+        res,
+        headers,
+      })
+      res.send('ok')
+    })
+  }
+
+  // Map to store transports by session ID
+  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
+
+  // Session access counter for timeout management
+  const sessionCounter = sessionTimeout
+    ? new SessionAccessCounter(
+        sessionTimeout,
+        (sessionId: string) => {
+          logger.info(`Session ${sessionId} timed out, cleaning up`)
+          const transport = transports[sessionId]
+          if (transport) {
+            transport.close()
+          }
+          delete transports[sessionId]
+        },
+        logger,
+      )
+    : null
+
+  // Handle POST requests for client-to-server communication
+  app.post(streamableHttpPath, async (req, res) => {
+    // Check for existing session ID
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    let transport: StreamableHTTPServerTransport
+
+    if (sessionId && transports[sessionId]) {
+      // Reuse existing transport
+      transport = transports[sessionId]
+      // Increment session access count
+      sessionCounter?.inc(sessionId, 'POST request for existing session')
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      // New initialization request
+
+      const server = new Server(
+        { name: 'supergateway', version: getVersion() },
+        { capabilities: {} },
+      )
+
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sessionId) => {
+          // Store the transport by session ID
+          transports[sessionId] = transport
+          // Initialize session access count
+          sessionCounter?.inc(sessionId, 'session initialization')
+        },
+      })
+      await server.connect(transport)
+      const child = spawn(stdioCmd, { shell: true })
+      child.on('exit', (code, signal) => {
+        logger.error(`Child exited: code=${code}, signal=${signal}`)
+        transport.close()
+      })
+
+      let buffer = ''
+      child.stdout.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() ?? ''
+        lines.forEach((line) => {
+          if (!line.trim()) return
+          try {
+            const jsonMsg = JSON.parse(line)
+            logger.info('Child → StreamableHttp:', line)
+            try {
+              transport.send(jsonMsg)
+            } catch (e) {
+              logger.error(`Failed to send to StreamableHttp`, e)
+            }
+          } catch {
+            logger.error(`Child non-JSON: ${line}`)
+          }
+        })
+      })
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+      })
+
+      transport.onmessage = (msg: JSONRPCMessage) => {
+        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
+        child.stdin.write(JSON.stringify(msg) + '\n')
+      }
+
+      transport.onclose = () => {
+        logger.info(`StreamableHttp connection closed (session ${sessionId})`)
+        if (transport.sessionId) {
+          sessionCounter?.clear(
+            transport.sessionId,
+            false,
+            'transport being closed',
+          )
+          delete transports[transport.sessionId]
+        }
+        child.kill()
+      }
+
+      transport.onerror = (err) => {
+        logger.error(`StreamableHttp error (session ${sessionId}):`, err)
+        if (transport.sessionId) {
+          sessionCounter?.clear(
+            transport.sessionId,
+            false,
+            'transport emitting error',
+          )
+          delete transports[transport.sessionId]
+        }
+        child.kill()
+      }
+    } else {
+      // Invalid request
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: No valid session ID provided',
+        },
+        id: null,
+      })
+      return
+    }
+
+    // Decrement session access count when response ends
+    let responseEnded = false
+    const handleResponseEnd = (event: string) => {
+      if (!responseEnded && transport.sessionId) {
+        responseEnded = true
+        logger.info(`Response ${event}`, transport.sessionId)
+        sessionCounter?.dec(transport.sessionId, `POST response ${event}`)
+      }
+    }
+
+    res.on('finish', () => handleResponseEnd('finished'))
+    res.on('close', () => handleResponseEnd('closed'))
+
+    // Handle the request
+    await transport.handleRequest(req, res, req.body)
+  })
+
+  // Reusable handler for GET and DELETE requests
+  const handleSessionRequest = async (
+    req: express.Request,
+    res: express.Response,
+  ) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send('Invalid or missing session ID')
+      return
+    }
+
+    // Increment session access count
+    sessionCounter?.inc(sessionId, `${req.method} request for existing session`)
+
+    // Decrement session access count when response ends
+    let responseEnded = false
+    const handleResponseEnd = (event: string) => {
+      if (!responseEnded) {
+        responseEnded = true
+        logger.info(`Response ${event}`, sessionId)
+        sessionCounter?.dec(sessionId, `${req.method} response ${event}`)
+      }
+    }
+
+    res.on('finish', () => handleResponseEnd('finished'))
+    res.on('close', () => handleResponseEnd('closed'))
+
+    const transport = transports[sessionId]
+    await transport.handleRequest(req, res)
+  }
+
+  // Handle GET requests for server-to-client notifications via SSE
+  app.get(streamableHttpPath, handleSessionRequest)
+
+  // Handle DELETE requests for session termination
+  app.delete(streamableHttpPath, handleSessionRequest)
+
+  app.listen(port, () => {
+    logger.info(`Listening on port ${port}`)
+    logger.info(
+      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+    )
+  })
+}
+
+
+
+================================================
+FILE: src/gateways/stdioToStatelessStreamableHttp.ts
+================================================
+import express from 'express'
+import cors, { type CorsOptions } from 'cors'
+import { spawn } from 'child_process'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {
+  JSONRPCMessage,
+  isInitializeRequest,
+} from '@modelcontextprotocol/sdk/types.js'
+import { Logger } from '../types.js'
+import { getVersion } from '../lib/getVersion.js'
+import { onSignals } from '../lib/onSignals.js'
+import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+
+export interface StdioToStreamableHttpArgs {
+  stdioCmd: string
+  port: number
+  streamableHttpPath: string
+  logger: Logger
+  corsOrigin: CorsOptions['origin']
+  healthEndpoints: string[]
+  headers: Record<string, string>
+  protocolVersion: string
+}
+
+const setResponseHeaders = ({
+  res,
+  headers,
+}: {
+  res: express.Response
+  headers: Record<string, string>
+}) =>
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value)
+  })
+
+// Helper function to create initialize request
+const createInitializeRequest = (
+  id: string | number,
+  protocolVersion: string,
+): JSONRPCMessage => ({
+  jsonrpc: '2.0',
+  id,
+  method: 'initialize',
+  params: {
+    protocolVersion,
+    capabilities: {
+      roots: {
+        listChanged: true,
+      },
+      sampling: {},
+    },
+    clientInfo: {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+  },
+})
+
+// Helper function to create initialized notification
+const createInitializedNotification = (): JSONRPCMessage => ({
+  jsonrpc: '2.0',
+  method: 'notifications/initialized',
+})
+
+export async function stdioToStatelessStreamableHttp(
+  args: StdioToStreamableHttpArgs,
+) {
+  const {
+    stdioCmd,
+    port,
+    streamableHttpPath,
+    logger,
+    corsOrigin,
+    healthEndpoints,
+    headers,
+    protocolVersion,
+  } = args
+
+  logger.info(
+    `  - Headers: ${Object(headers).length ? JSON.stringify(headers) : '(none)'}`,
+  )
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - streamableHttpPath: ${streamableHttpPath}`)
+  logger.info(`  - protocolVersion: ${protocolVersion}`)
+
+  logger.info(
+    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
+  )
+  logger.info(
+    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+
+  onSignals({ logger })
+
+  const app = express()
+  app.use(express.json())
+
+  if (corsOrigin) {
+    app.use(cors({ origin: corsOrigin }))
+  }
+
+  for (const ep of healthEndpoints) {
+    app.get(ep, (_req, res) => {
+      setResponseHeaders({
+        res,
+        headers,
+      })
+      res.send('ok')
+    })
+  }
+
+  app.post(streamableHttpPath, async (req, res) => {
+    // In stateless mode, create a new instance of transport and server for each request
+    // to ensure complete isolation. A single instance would cause request ID collisions
+    // when multiple clients connect concurrently.
+
+    try {
+      const server = new Server(
+        { name: 'supergateway', version: getVersion() },
+        { capabilities: {} },
+      )
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      })
+
+      await server.connect(transport)
+      const child = spawn(stdioCmd, { shell: true })
+      child.on('exit', (code, signal) => {
+        logger.error(`Child exited: code=${code}, signal=${signal}`)
+        transport.close()
+      })
+
+      // State tracking for initialization flow
+      let isInitialized = false
+      let initializeRequestId: string | number | null = null // Current initialize request ID
+      let isAutoInitializing = false // Flag to indicate if we're auto-initializing
+      let pendingOriginalMessage: JSONRPCMessage | null = null
+
+      let buffer = ''
+      child.stdout.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() ?? ''
+        lines.forEach((line) => {
+          if (!line.trim()) return
+          try {
+            const jsonMsg = JSON.parse(line)
+            logger.info('Child → StreamableHttp:', line)
+
+            // Handle initialize response (both auto and client initiated)
+            if (initializeRequestId && jsonMsg.id === initializeRequestId) {
+              logger.info('Initialize response received')
+              isInitialized = true
+
+              // If this was our auto-initialization, send initialized notification and pending message
+              if (isAutoInitializing) {
+                // Send initialized notification
+                const initializedNotification = createInitializedNotification()
+                logger.info(
+                  `StreamableHttp → Child (initialized): ${JSON.stringify(initializedNotification)}`,
+                )
+                child.stdin.write(
+                  JSON.stringify(initializedNotification) + '\n',
+                )
+
+                // Now send the original message
+                if (pendingOriginalMessage) {
+                  logger.info(
+                    `StreamableHttp → Child (original): ${JSON.stringify(pendingOriginalMessage)}`,
+                  )
+                  child.stdin.write(
+                    JSON.stringify(pendingOriginalMessage) + '\n',
+                  )
+                  pendingOriginalMessage = null
+                }
+
+                // Reset auto-initialize tracking
+                isAutoInitializing = false
+                initializeRequestId = null
+
+                // Don't forward our auto-initialize response to the client
+                return
+              } else {
+                // Client-initiated initialize response, just reset tracking
+                initializeRequestId = null
+              }
+            }
+
+            try {
+              transport.send(jsonMsg)
+            } catch (e) {
+              logger.error(`Failed to send to StreamableHttp`, e)
+            }
+          } catch {
+            logger.error(`Child non-JSON: ${line}`)
+          }
+        })
+      })
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        logger.error(`Child stderr: ${chunk.toString('utf8')}`)
+      })
+
+      transport.onmessage = (msg: JSONRPCMessage) => {
+        logger.info(`StreamableHttp → Child: ${JSON.stringify(msg)}`)
+
+        // Check if we need to auto-initialize first
+        if (!isInitialized && !isInitializeRequest(msg)) {
+          // Store the original message and send initialize first
+          pendingOriginalMessage = msg
+          initializeRequestId = `init_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          isAutoInitializing = true
+
+          logger.info(
+            'Non-initialize message detected, sending auto-initialize request first',
+          )
+          const initRequest = createInitializeRequest(
+            initializeRequestId,
+            protocolVersion,
+          )
+          logger.info(
+            `StreamableHttp → Child (auto-initialize): ${JSON.stringify(initRequest)}`,
+          )
+          child.stdin.write(JSON.stringify(initRequest) + '\n')
+
+          // Don't send the original message yet - it will be sent after initialization
+          return
+        }
+
+        // Track initialize request ID (both client and auto)
+        if (isInitializeRequest(msg) && 'id' in msg && msg.id !== undefined) {
+          initializeRequestId = msg.id
+          isAutoInitializing = false // This is client-initiated
+          logger.info(`Tracking initialize request ID: ${msg.id}`)
+        }
+
+        // Send all messages to child process normally
+        child.stdin.write(JSON.stringify(msg) + '\n')
+      }
+
+      transport.onclose = () => {
+        logger.info('StreamableHttp connection closed')
+        child.kill()
+      }
+
+      transport.onerror = (err) => {
+        logger.error(`StreamableHttp error:`, err)
+        child.kill()
+      }
+
+      await transport.handleRequest(req, res, req.body)
+    } catch (error) {
+      logger.error('Error handling MCP request:', error)
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error',
+          },
+          id: null,
+        })
+      }
+    }
+  })
+
+  app.get(streamableHttpPath, async (req, res) => {
+    logger.info('Received GET MCP request')
+    res.writeHead(405).end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Method not allowed.',
+        },
+        id: null,
+      }),
+    )
+  })
+
+  app.delete(streamableHttpPath, async (req, res) => {
+    logger.info('Received DELETE MCP request')
+    res.writeHead(405).end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Method not allowed.',
+        },
+        id: null,
+      }),
+    )
+  })
+
+  app.listen(port, () => {
+    logger.info(`Listening on port ${port}`)
+    logger.info(
+      `StreamableHttp endpoint: http://localhost:${port}${streamableHttpPath}`,
+    )
+  })
+}
+
+
+
+================================================
+FILE: src/gateways/stdioToWs.ts
+================================================
+import express from 'express'
+import cors, { type CorsOptions } from 'cors'
+import { createServer } from 'http'
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import { Logger } from '../types.js'
+import { getVersion } from '../lib/getVersion.js'
+import { WebSocketServerTransport } from '../server/websocket.js'
+import { onSignals } from '../lib/onSignals.js'
+import { serializeCorsOrigin } from '../lib/serializeCorsOrigin.js'
+
+export interface StdioToWsArgs {
+  stdioCmd: string
+  port: number
+  messagePath: string
+  logger: Logger
+  corsOrigin: CorsOptions['origin']
+  healthEndpoints: string[]
+}
+
+export async function stdioToWs(args: StdioToWsArgs) {
+  const { stdioCmd, port, messagePath, logger, healthEndpoints, corsOrigin } =
+    args
+  logger.info(`  - port: ${port}`)
+  logger.info(`  - stdio: ${stdioCmd}`)
+  logger.info(`  - messagePath: ${messagePath}`)
+  logger.info(
+    `  - CORS: ${corsOrigin ? `enabled (${serializeCorsOrigin({ corsOrigin })})` : 'disabled'}`,
+  )
+  logger.info(
+    `  - Health endpoints: ${healthEndpoints.length ? healthEndpoints.join(', ') : '(none)'}`,
+  )
+
+  let wsTransport: WebSocketServerTransport | null = null
+  let child: ChildProcessWithoutNullStreams | null = null
+  let isReady = false
+
+  const cleanup = () => {
+    if (wsTransport) {
+      wsTransport.close().catch((err) => {
+        logger.error(`Error stopping WebSocket server: ${err.message}`)
+      })
+    }
+    if (child) {
+      child.kill()
+    }
+  }
+
+  onSignals({
+    logger,
+    cleanup,
+  })
+
+  try {
+    child = spawn(stdioCmd, { shell: true })
+    child.on('exit', (code, signal) => {
+      logger.error(`Child exited: code=${code}, signal=${signal}`)
+      cleanup()
+      process.exit(code ?? 1)
+    })
+
+    const server = new Server(
+      { name: 'supergateway', version: getVersion() },
+      { capabilities: {} },
+    )
+
+    // Handle child process output
+    let buffer = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      lines.forEach((line) => {
+        if (!line.trim()) return
+        try {
+          const jsonMsg = JSON.parse(line)
+          logger.info(`Child → WebSocket: ${JSON.stringify(jsonMsg)}`)
+          // Broadcast to all connected clients
+          wsTransport?.send(jsonMsg, jsonMsg.id).catch((err) => {
+            logger.error('Failed to broadcast message:', err)
+          })
+        } catch {
+          logger.error(`Child non-JSON: ${line}`)
+        }
+      })
+    })
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      logger.info(`Child stderr: ${chunk.toString('utf8')}`)
+    })
+
+    const app = express()
+
+    if (corsOrigin) {
+      app.use(cors({ origin: corsOrigin }))
+    }
+
+    for (const ep of healthEndpoints) {
+      app.get(ep, (_req, res) => {
+        if (child?.killed) {
+          res.status(500).send('Child process has been killed')
+        }
+
+        if (!isReady) {
+          res.status(500).send('Server is not ready')
+        }
+
+        res.send('ok')
+      })
+    }
+
+    const httpServer = createServer(app)
+
+    wsTransport = new WebSocketServerTransport({
+      path: messagePath,
+      server: httpServer,
+    })
+
+    await server.connect(wsTransport)
+
+    wsTransport.onmessage = (msg: JSONRPCMessage) => {
+      const line = JSON.stringify(msg)
+      logger.info(`WebSocket → Child: ${line}`)
+      child!.stdin.write(line + '\n')
+    }
+
+    wsTransport.onconnection = (clientId: string) => {
+      logger.info(`New WebSocket connection: ${clientId}`)
+    }
+
+    wsTransport.ondisconnection = (clientId: string) => {
+      logger.info(`WebSocket connection closed: ${clientId}`)
+    }
+
+    wsTransport.onerror = (err: Error) => {
+      logger.error(`WebSocket error: ${err.message}`)
+    }
+
+    isReady = true
+
+    httpServer.listen(port, () => {
+      logger.info(`Listening on port ${port}`)
+      logger.info(`WebSocket endpoint: ws://localhost:${port}${messagePath}`)
+    })
+  } catch (err: any) {
+    logger.error(`Failed to start: ${err.message}`)
+    cleanup()
+    process.exit(1)
+  }
+}
+
+
+
+================================================
+FILE: src/gateways/streamableHttpToStdio.ts
+================================================
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type {
+  JSONRPCMessage,
+  JSONRPCRequest,
+  ClientCapabilities,
+  Implementation,
+} from '@modelcontextprotocol/sdk/types.js'
+import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
+import { getVersion } from '../lib/getVersion.js'
+import { Logger } from '../types.js'
+import { onSignals } from '../lib/onSignals.js'
+
+export interface StreamableHttpToStdioArgs {
+  streamableHttpUrl: string
+  logger: Logger
+  headers: Record<string, string>
+}
+
+let mcpClient: Client | undefined
+
+const newInitializeMcpClient = ({ message }: { message: JSONRPCRequest }) => {
+  const clientInfo = message.params?.clientInfo as Implementation | undefined
+  const clientCapabilities = message.params?.capabilities as
+    | ClientCapabilities
+    | undefined
+
+  return new Client(
+    {
+      name: clientInfo?.name ?? 'supergateway',
+      version: clientInfo?.version ?? getVersion(),
+    },
+    {
+      capabilities: clientCapabilities ?? {},
+    },
+  )
+}
+
+const newFallbackMcpClient = async ({
+  mcpTransport,
+}: {
+  mcpTransport: StreamableHTTPClientTransport
+}) => {
+  const fallbackMcpClient = new Client(
+    {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+    {
+      capabilities: {},
+    },
+  )
+
+  await fallbackMcpClient.connect(mcpTransport)
+  return fallbackMcpClient
+}
+
+export async function streamableHttpToStdio(args: StreamableHttpToStdioArgs) {
+  const { streamableHttpUrl, logger, headers } = args
+
+  logger.info(`  - streamableHttp: ${streamableHttpUrl}`)
+  logger.info(
+    `  - Headers: ${Object.keys(headers).length ? JSON.stringify(headers) : '(none)'}`,
+  )
+  logger.info('Connecting to Streamable HTTP...')
+
+  onSignals({ logger })
+
+  const mcpTransport = new StreamableHTTPClientTransport(
+    new URL(streamableHttpUrl),
+    {
+      requestInit: {
+        headers,
+      },
+    },
+  )
+
+  mcpTransport.onerror = (err) => {
+    logger.error('Streamable HTTP error:', err)
+  }
+
+  mcpTransport.onclose = () => {
+    logger.error('Streamable HTTP connection closed')
+    process.exit(1)
+  }
+
+  const stdioServer = new Server(
+    {
+      name: 'supergateway',
+      version: getVersion(),
+    },
+    {
+      capabilities: {},
+    },
+  )
+
+  const stdioTransport = new StdioServerTransport()
+  await stdioServer.connect(stdioTransport)
+
+  const wrapResponse = (req: JSONRPCRequest, payload: object) => ({
+    jsonrpc: req.jsonrpc || '2.0',
+    id: req.id,
+    ...payload,
+  })
+
+  stdioServer.transport!.onmessage = async (message: JSONRPCMessage) => {
+    const isRequest = 'method' in message && 'id' in message
+    if (isRequest) {
+      logger.info('Stdio → Streamable HTTP:', message)
+      const req = message as JSONRPCRequest
+      let result
+
+      try {
+        if (!mcpClient) {
+          if (message.method === 'initialize') {
+            mcpClient = newInitializeMcpClient({
+              message,
+            })
+
+            const originalRequest = mcpClient.request
+
+            mcpClient.request = async function (
+              possibleInitRequestMessage,
+              ...restArgs
+            ) {
+              if (
+                InitializeRequestSchema.safeParse(possibleInitRequestMessage)
+                  .success &&
+                message.params?.protocolVersion
+              ) {
+                // respect the protocol version from the stdio client's init request
+                possibleInitRequestMessage.params!.protocolVersion =
+                  message.params.protocolVersion
+              }
+              result = await originalRequest.apply(this, [
+                possibleInitRequestMessage,
+                ...restArgs,
+              ])
+              return result
+            }
+
+            await mcpClient.connect(mcpTransport)
+            mcpClient.request = originalRequest
+          } else {
+            logger.info(
+              'Streamable HTTP client not initialized, creating fallback client',
+            )
+            mcpClient = await newFallbackMcpClient({ mcpTransport })
+          }
+
+          logger.info('Streamable HTTP connected')
+        } else {
+          result = await mcpClient.request(req, z.any())
+        }
+      } catch (err) {
+        logger.error('Request error:', err)
+        const errorCode =
+          err && typeof err === 'object' && 'code' in err
+            ? (err as any).code
+            : -32000
+        let errorMsg =
+          err && typeof err === 'object' && 'message' in err
+            ? (err as any).message
+            : 'Internal error'
+        const prefix = `MCP error ${errorCode}:`
+        if (errorMsg.startsWith(prefix)) {
+          errorMsg = errorMsg.slice(prefix.length).trim()
+        }
+        const errorResp = wrapResponse(req, {
+          error: {
+            code: errorCode,
+            message: errorMsg,
+          },
+        })
+        process.stdout.write(JSON.stringify(errorResp) + '\n')
+        return
+      }
+      const response = wrapResponse(
+        req,
+        result.hasOwnProperty('error')
+          ? { error: { ...result.error } }
+          : { result: { ...result } },
+      )
+      logger.info('Response:', response)
+      process.stdout.write(JSON.stringify(response) + '\n')
+    } else {
+      logger.info('Streamable HTTP → Stdio:', message)
+      process.stdout.write(JSON.stringify(message) + '\n')
+    }
+  }
+
+  logger.info('Stdio server listening')
+}
+
+
+
+================================================
+FILE: src/lib/corsOrigin.ts
+================================================
+export const corsOrigin = ({
+  argv,
+}: {
+  argv: {
+    cors: (string | number)[] | undefined
+  }
+}) => {
+  if (!argv.cors) {
+    return false
+  }
+
+  if (argv.cors.length === 0) {
+    return '*'
+  }
+
+  const origins = argv.cors.map((item) => `${item}`)
+
+  if (origins.includes('*')) return '*'
+
+  return origins.map((origin) => {
+    if (/^\/.*\/$/.test(origin)) {
+      const pattern = origin.slice(1, -1)
+      try {
+        return new RegExp(pattern)
+      } catch (error) {
+        return origin
+      }
+    }
+    return origin
+  })
+}
+
+
+
+================================================
+FILE: src/lib/getLogger.ts
+================================================
+import util from 'node:util'
+import { Logger } from '../types.js'
+
+const defaultFormatArgs = (args: any[]) => args
+
+const log =
+  (
+    {
+      formatArgs = defaultFormatArgs,
+    }: {
+      formatArgs?: typeof defaultFormatArgs
+    } = { formatArgs: defaultFormatArgs },
+  ) =>
+  (...args: any[]) =>
+    console.log('[supergateway]', ...formatArgs(args))
+
+const logStderr =
+  (
+    {
+      formatArgs = defaultFormatArgs,
+    }: {
+      formatArgs?: typeof defaultFormatArgs
+    } = { formatArgs: defaultFormatArgs },
+  ) =>
+  (...args: any[]) =>
+    console.error('[supergateway]', ...formatArgs(args))
+
+const noneLogger: Logger = {
+  info: () => {},
+  error: () => {},
+}
+
+const infoLogger: Logger = {
+  info: log(),
+  error: logStderr(),
+}
+
+const infoLoggerStdio: Logger = {
+  info: logStderr(),
+  error: logStderr(),
+}
+
+const debugFormatArgs = (args: any[]) =>
+  args.map((arg) => {
+    if (typeof arg === 'object') {
+      return util.inspect(arg, {
+        depth: null,
+        colors: process.stderr.isTTY,
+        compact: false,
+      })
+    }
+
+    return arg
+  })
+
+const debugLogger: Logger = {
+  info: log({ formatArgs: debugFormatArgs }),
+  error: logStderr({ formatArgs: debugFormatArgs }),
+}
+
+const debugLoggerStdio: Logger = {
+  info: logStderr({ formatArgs: debugFormatArgs }),
+  error: logStderr({ formatArgs: debugFormatArgs }),
+}
+
+export const getLogger = ({
+  logLevel,
+  outputTransport,
+}: {
+  logLevel: string
+  outputTransport: string
+}): Logger => {
+  if (logLevel === 'none') {
+    return noneLogger
+  }
+
+  if (logLevel === 'debug') {
+    return outputTransport === 'stdio' ? debugLoggerStdio : debugLogger
+  }
+
+  // info logLevel
+  return outputTransport === 'stdio' ? infoLoggerStdio : infoLogger
+}
+
+
+
+================================================
+FILE: src/lib/getVersion.ts
+================================================
+import { fileURLToPath } from 'url'
+import { join, dirname } from 'path'
+import { readFileSync } from 'fs'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+export function getVersion(): string {
+  try {
+    const packageJsonPath = join(__dirname, '../../package.json')
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
+    return packageJson.version || '1.0.0'
+  } catch (err) {
+    console.error('[supergateway]', 'Unable to retrieve version:', err)
+    return 'unknown'
+  }
+}
+
+
+
+================================================
+FILE: src/lib/headers.ts
+================================================
+import { Logger } from '../types.js'
+
+const parseHeaders = ({
+  argvHeader,
+  logger,
+}: {
+  argvHeader: (string | number)[]
+  logger: Logger
+}): Record<string, string> => {
+  return argvHeader.reduce<Record<string, string>>((acc, rawHeader) => {
+    const header = `${rawHeader}`
+
+    const colonIndex = header.indexOf(':')
+    if (colonIndex === -1) {
+      logger.error(`Invalid header format: ${header}, ignoring`)
+      return acc
+    }
+
+    const key = header.slice(0, colonIndex).trim()
+    const value = header.slice(colonIndex + 1).trim()
+
+    if (!key || !value) {
+      logger.error(`Invalid header format: ${header}, ignoring`)
+      return acc
+    }
+
+    acc[key] = value
+    return acc
+  }, {})
+}
+
+export const headers = ({
+  argv,
+  logger,
+}: {
+  argv: {
+    header: (string | number)[]
+    oauth2Bearer: string | undefined
+  }
+  logger: Logger
+}): Record<string, string> => {
+  const headers = parseHeaders({
+    argvHeader: argv.header,
+    logger,
+  })
+
+  if ('oauth2Bearer' in argv) {
+    return {
+      ...headers,
+      Authorization: `Bearer ${argv.oauth2Bearer}`,
+    }
+  }
+
+  return headers
+}
+
+
+
+================================================
+FILE: src/lib/onSignals.ts
+================================================
+import { Logger } from '../types.js'
+
+export interface OnSignalsOptions {
+  logger: Logger
+  cleanup?: () => void
+}
+
+/**
+ * Sets up signal handlers for graceful shutdown.
+ *
+ * @param options Configuration options
+ * @param options.logger Logger instance
+ * @param options.cleanup Optional cleanup function to be called before exit
+ */
+export function onSignals(options: OnSignalsOptions): void {
+  const { logger, cleanup } = options
+
+  const handleSignal = (signal: string) => {
+    logger.info(`Caught ${signal}. Exiting...`)
+    if (cleanup) {
+      cleanup()
+    }
+    process.exit(0)
+  }
+
+  process.on('SIGINT', () => handleSignal('SIGINT'))
+
+  process.on('SIGTERM', () => handleSignal('SIGTERM'))
+
+  process.on('SIGHUP', () => handleSignal('SIGHUP'))
+
+  process.stdin.on('close', () => {
+    logger.info('stdin closed. Exiting...')
+    if (cleanup) {
+      cleanup()
+    }
+    process.exit(0)
+  })
+}
+
+
+
+================================================
+FILE: src/lib/serializeCorsOrigin.ts
+================================================
+import type { CorsOptions } from 'cors'
+
+export const serializeCorsOrigin = ({
+  corsOrigin,
+}: {
+  corsOrigin: CorsOptions['origin']
+}) =>
+  JSON.stringify(corsOrigin, (_key, value) => {
+    if (value instanceof RegExp) {
+      return value.toString()
+    }
+
+    return value
+  })
+
+
+
+================================================
+FILE: src/lib/sessionAccessCounter.ts
+================================================
+import { Logger } from '../types.js'
+
+export class SessionAccessCounter {
+  private sessions: Map<
+    string,
+    { accessCount: number } | { timeout: NodeJS.Timeout }
+  > = new Map()
+
+  constructor(
+    public timeout: number,
+    public cleanup: (sessionId: string) => unknown,
+    public logger: Logger,
+  ) {}
+
+  inc(sessionId: string, reason: string) {
+    this.logger.info(
+      `SessionAccessCounter.inc() ${sessionId}, caused by ${reason}`,
+    )
+
+    const session = this.sessions.get(sessionId)
+
+    if (!session) {
+      // New session
+      this.logger.info(
+        `Session access count 0 -> 1 for ${sessionId} (new session)`,
+      )
+      this.sessions.set(sessionId, { accessCount: 1 })
+      return
+    }
+
+    if ('timeout' in session) {
+      // Clear pending cleanup and reactivate
+      this.logger.info(
+        `Session access count 0 -> 1, clearing cleanup timeout for ${sessionId}`,
+      )
+      clearTimeout(session.timeout)
+      this.sessions.set(sessionId, { accessCount: 1 })
+    } else {
+      // Increment active session
+      this.logger.info(
+        `Session access count ${session.accessCount} -> ${session.accessCount + 1} for ${sessionId}`,
+      )
+      session.accessCount++
+    }
+  }
+
+  dec(sessionId: string, reason: string) {
+    this.logger.info(
+      `SessionAccessCounter.dec() ${sessionId}, caused by ${reason}`,
+    )
+
+    const session = this.sessions.get(sessionId)
+
+    if (!session) {
+      this.logger.error(
+        `Called dec() on non-existent session ${sessionId}, ignoring`,
+      )
+      return
+    }
+
+    if ('timeout' in session) {
+      this.logger.error(
+        `Called dec() on session ${sessionId} that is already pending cleanup, ignoring`,
+      )
+      return
+    }
+
+    if (session.accessCount <= 0) {
+      throw new Error(
+        `Invalid access count ${session.accessCount} for session ${sessionId}`,
+      )
+    }
+
+    session.accessCount--
+    this.logger.info(
+      `Session access count ${session.accessCount + 1} -> ${session.accessCount} for ${sessionId}`,
+    )
+
+    if (session.accessCount === 0) {
+      this.logger.info(
+        `Session access count reached 0, setting cleanup timeout for ${sessionId}`,
+      )
+
+      this.sessions.set(sessionId, {
+        timeout: setTimeout(() => {
+          this.logger.info(`Session ${sessionId} timed out, cleaning up`)
+          this.sessions.delete(sessionId)
+          this.cleanup(sessionId)
+        }, this.timeout),
+      })
+    }
+  }
+
+  clear(sessionId: string, runCleanup: boolean, reason: string) {
+    this.logger.info(
+      `SessionAccessCounter.clear() ${sessionId}, caused by ${reason}`,
+    )
+
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      this.logger.info(`Attempted to clear non-existent session ${sessionId}`)
+      return
+    }
+
+    // Clear any pending timeout
+    if ('timeout' in session) {
+      clearTimeout(session.timeout)
+    }
+
+    // Remove from tracking
+    this.sessions.delete(sessionId)
+
+    // Run cleanup if requested
+    if (runCleanup) {
+      this.cleanup(sessionId)
+    }
+  }
+}
+
+
+
+================================================
+FILE: src/server/websocket.ts
+================================================
+import {
+  Transport,
+  TransportSendOptions,
+} from '@modelcontextprotocol/sdk/shared/transport.js'
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
+import { v4 as uuidv4 } from 'uuid'
+import { WebSocket, WebSocketServer } from 'ws'
+import { Server } from 'http'
+
+export class WebSocketServerTransport implements Transport {
+  private wss!: WebSocketServer
+  private clients: Map<string, WebSocket> = new Map()
+
+  onclose?: () => void
+  onerror?: (err: Error) => void
+  private messageHandler?: (msg: JSONRPCMessage, clientId: string) => void
+  onconnection?: (clientId: string) => void
+  ondisconnection?: (clientId: string) => void
+
+  set onmessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
+    this.messageHandler = handler
+      ? (msg, clientId) => {
+          // @ts-ignore
+          if (msg.id === undefined) {
+            console.log('Broadcast message:', msg)
+            return handler(msg)
+          }
+          // @ts-ignore
+          return handler({
+            ...msg,
+            // @ts-ignore
+            id: clientId + ':' + msg.id,
+          })
+        }
+      : undefined
+  }
+
+  constructor({ path, server }: { path: string; server: Server }) {
+    this.wss = new WebSocketServer({
+      path,
+      server,
+    })
+  }
+
+  async start(): Promise<void> {
+    this.wss.on('connection', (ws: WebSocket) => {
+      const clientId = uuidv4()
+      this.clients.set(clientId, ws)
+      this.onconnection?.(clientId)
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString())
+          this.messageHandler?.(msg, clientId)
+        } catch (err) {
+          this.onerror?.(new Error(`Failed to parse message: ${err}`))
+        }
+      })
+
+      ws.on('close', () => {
+        this.clients.delete(clientId)
+        this.ondisconnection?.(clientId)
+      })
+
+      ws.on('error', (err: Error) => {
+        this.onerror?.(err)
+      })
+    })
+  }
+
+  async send(
+    msg: JSONRPCMessage,
+    options?: TransportSendOptions | string,
+  ): Promise<void> {
+    // decide if they passed a raw clientId (legacy) or options object
+    const clientId = typeof options === 'string' ? options : undefined
+
+    // if your protocol mangles IDs to include clientId, strip it off
+    const [cId, rawId] = clientId?.split(':') ?? []
+    if (rawId !== undefined) {
+      // @ts-ignore
+      msg.id = parseInt(rawId, 10)
+    }
+
+    const payload = JSON.stringify(msg)
+
+    if (cId) {
+      // send only to the one client
+      const ws = this.clients.get(cId)
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(payload)
+      } else {
+        this.clients.delete(cId)
+        this.ondisconnection?.(cId)
+      }
+    } else {
+      // broadcast to everyone
+      for (const [id, ws] of this.clients) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(payload)
+        } else {
+          this.clients.delete(id)
+          this.ondisconnection?.(id)
+        }
+      }
+    }
+  }
+
+  async broadcast(msg: JSONRPCMessage): Promise<void> {
+    return this.send(msg)
+  }
+
+  async close(): Promise<void> {
+    return new Promise((resolve) => {
+      this.wss.close(() => {
+        this.clients.clear()
+        resolve()
+      })
+    })
+  }
+}
+
+
+
+================================================
+FILE: tests/baseUrl.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, ChildProcess } from 'child_process'
+
+const PORT = 11000
+const BASE_URL = `http://0.0.0.0:${PORT}`
+const SSE_PATH = '/sse'
+const MESSAGE_PATH = '/message'
+
+let gatewayProc: ChildProcess
+
+test.before(() => {
+  gatewayProc = spawn(
+    'npm',
+    [
+      'run',
+      'start',
+      '--',
+      '--stdio',
+      'node tests/helpers/mock-mcp-server.js stdio',
+      '--outputTransport',
+      'sse',
+      '--port',
+      String(PORT),
+      '--baseUrl',
+      BASE_URL,
+      '--ssePath',
+      SSE_PATH,
+      '--messagePath',
+      MESSAGE_PATH,
+    ],
+    { stdio: 'ignore', shell: false },
+  )
+  gatewayProc.unref()
+})
+
+test.after(async () => {
+  gatewayProc.kill('SIGINT')
+  await new Promise((resolve) => gatewayProc.once('exit', resolve))
+})
+
+test('baseUrl should be passed correctly in endpoint event', async () => {
+  const [{ Client }, { SSEClientTransport }] = await Promise.all([
+    import('@modelcontextprotocol/sdk/client/index.js'),
+    import('@modelcontextprotocol/sdk/client/sse.js'),
+  ])
+
+  const transport = new SSEClientTransport(new URL(SSE_PATH, BASE_URL))
+  const client = new Client({ name: 'endpoint-tester', version: '1.0.0' })
+
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+
+  await client.connect(transport)
+  const endpoint = (transport as any)._endpoint as URL | undefined
+  await client.close()
+  transport.close()
+
+  assert.ok(
+    endpoint && endpoint.href.startsWith(`${BASE_URL}${MESSAGE_PATH}`),
+    `endpoint should start with "${BASE_URL}${MESSAGE_PATH}", got: ${endpoint?.href}`,
+  )
+})
+
+
+
+================================================
+FILE: tests/concurrency.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { randomInt } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
+import { spawn, ChildProcess } from 'child_process'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+
+const BASE_URL = 'http://localhost:11001'
+const SSE_PATH = '/sse'
+const CONCURRENCY = 1
+
+function makeLimiter(maxConcurrency: number) {
+  let active = 0
+  const queue: (() => void)[] = []
+
+  return async function <T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= maxConcurrency) {
+      // wait for a slot
+      await new Promise<void>((res) => queue.push(res))
+    }
+    active++
+    try {
+      return await fn()
+    } finally {
+      active--
+      // free up next waiter
+      const next = queue.shift()
+      if (next) next()
+    }
+  }
+}
+
+const limit = makeLimiter(CONCURRENCY)
+
+let gatewayProc: ChildProcess
+
+test.before(async () => {
+  gatewayProc = spawn(
+    'npm',
+    [
+      'run',
+      'start',
+      '--',
+      '--stdio',
+      'node tests/helpers/mock-mcp-server.js stdio',
+      '--outputTransport',
+      'sse',
+      '--port',
+      '11001',
+      '--baseUrl',
+      BASE_URL,
+      '--ssePath',
+      SSE_PATH,
+      '--messagePath',
+      '/message',
+    ],
+    { stdio: 'ignore', shell: false },
+  )
+
+  gatewayProc.unref()
+
+  await new Promise((resolve) => setTimeout(resolve, 2000))
+})
+
+test.after(async () => {
+  gatewayProc.kill('SIGINT')
+  await new Promise((resolve) => gatewayProc.once('exit', resolve))
+})
+
+test('concurrent listTools → callTool', async () => {
+  const succeededInstances: { id: number; text: string }[] = []
+
+  const runClient = async (id: number) => {
+    const headers = {
+      Authorization: 'Bearer YOUR_API_KEY',
+      'X-Instance-ID': String(id),
+    }
+
+    /** helper wrapper so TS sees correct `(input, init?)` signature */
+    const fetchWithHeaders =
+      (hdrs: Record<string, string>) =>
+      (input: RequestInfo | URL, init: RequestInit = {}) =>
+        fetch(input, { ...init, headers: { ...init.headers, ...hdrs } })
+
+    const transport = new SSEClientTransport(new URL(SSE_PATH, BASE_URL), {
+      eventSourceInit: { fetch: fetchWithHeaders(headers) },
+      requestInit: { headers },
+    })
+
+    const client = new Client({ name: `load-${id}`, version: '0.0.0' })
+
+    const timing: Record<string, number> = {}
+    const span = async <T>(label: string, fn: () => Promise<T>) => {
+      const t0 = performance.now()
+      const out = await fn()
+      timing[label] = performance.now() - t0
+      return out
+    }
+
+    await client.connect(transport)
+
+    const tools = await span('listTools', () => client.listTools())
+    assert.ok(Array.isArray(tools.tools), 'listTools() must return array')
+
+    const rnd = randomInt(1, 51)
+    const reply = await span('add', () =>
+      client.callTool({ name: 'add', arguments: { a: id, b: rnd } }, undefined),
+    )
+    const content = reply.content as any
+    const text = content && content[0]?.text
+    console.log({ text })
+    assert.strictEqual(text, `The sum of ${id} and ${rnd} is ${id + rnd}.`)
+
+    await client.close()
+    transport.close()
+    console.log(`Instance ${id} timings:`, timing)
+    succeededInstances.push({
+      id,
+      text,
+    })
+  }
+
+  await Promise.all(
+    Array.from({ length: CONCURRENCY }, (_, i) =>
+      limit(() => runClient(i + 1)),
+    ),
+  )
+
+  assert.strictEqual(
+    succeededInstances.length,
+    CONCURRENCY,
+    'All instances should succeed',
+  )
+
+  console.log({ succeededInstances })
+})
+
+
+
+================================================
+FILE: tests/protocolVersion.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, ChildProcess } from 'child_process'
+
+import { Client } from 'prev-modelcontextprotocol-sdk/client/index.js'
+import { StdioClientTransport } from 'prev-modelcontextprotocol-sdk/client/stdio.js'
+
+const MCP_PORT = 11003
+const MCP_URL = `http://localhost:${MCP_PORT}/sse`
+
+let serverProc: ChildProcess | undefined
+
+function spawnMcpServer(): Promise<ChildProcess> {
+  return new Promise((res, rej) => {
+    const proc = spawn('node', ['tests/helpers/mock-mcp-server.js', 'sse'], {
+      env: { ...process.env, PORT: String(MCP_PORT) },
+      shell: false,
+      stdio: ['inherit', 'pipe', 'inherit'],
+    })
+
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => {
+      if (chunk.includes('Server is running on port')) {
+        res(proc)
+      }
+    })
+
+    proc.on('error', rej)
+  })
+}
+
+test.before(async () => {
+  serverProc = await spawnMcpServer()
+})
+
+test.after(() => serverProc?.kill('SIGINT'))
+
+test('protocol version is passed', async () => {
+  const gatewayCmd = ['npm', 'run', 'start', '--', '--sse', MCP_URL]
+
+  const transport = new StdioClientTransport({
+    command: gatewayCmd[0],
+    args: gatewayCmd.slice(1),
+  })
+
+  const client = new Client({ name: 'gateway-test', version: '1.0.0' })
+  await client.connect(transport)
+
+  const { tools } = await client.listTools()
+  assert.ok(tools.some((t) => t.name === 'add'))
+
+  type Reply = { content: Array<{ text: string }> }
+  const reply = (await client.callTool({
+    name: 'add',
+    arguments: { a: 2, b: 3 },
+  })) as Reply
+
+  assert.strictEqual(reply.content[0].text, 'The sum of 2 and 3 is 5.')
+  await client.close()
+})
+
+
+
+================================================
+FILE: tests/stdioToStatefulStreamableHttp.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, ChildProcess } from 'child_process'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+
+const PORT = 11004
+const MCP_URL = `http://localhost:${PORT}/mcp`
+
+let gatewayProc: ChildProcess
+
+test.before(() => {
+  gatewayProc = spawn(
+    'npm',
+    [
+      'run',
+      'start',
+      '--',
+      '--stdio',
+      'node tests/helpers/mock-mcp-server.js stdio',
+      '--outputTransport',
+      'streamableHttp',
+      '--stateful',
+      '--port',
+      String(PORT),
+      '--streamableHttpPath',
+      '/mcp',
+    ],
+    { stdio: 'ignore', shell: false },
+  )
+  gatewayProc.unref()
+})
+
+test.after(async () => {
+  gatewayProc.kill('SIGINT')
+  await new Promise((resolve) => gatewayProc.once('exit', resolve))
+})
+
+test('stdioToStatefulStreamableHttp listTools and callTool', async () => {
+  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL))
+  const client = new Client({ name: 'stateful-test', version: '1.0.0' })
+  await new Promise((r) => setTimeout(r, 2000))
+  await client.connect(transport)
+
+  assert.ok(transport.sessionId, 'sessionId should be set after connect')
+
+  const { tools } = await client.listTools()
+  assert.ok(tools.some((t) => t.name === 'add'))
+
+  type Reply = { content: Array<{ text: string }> }
+  const reply1 = (await client.callTool({
+    name: 'add',
+    arguments: { a: 1, b: 2 },
+  })) as Reply
+
+  assert.strictEqual(reply1.content[0].text, 'The sum of 1 and 2 is 3.')
+
+  const reply2 = (await client.callTool({
+    name: 'add',
+    arguments: { a: 3, b: 4 },
+  })) as Reply
+
+  assert.strictEqual(reply2.content[0].text, 'The sum of 3 and 4 is 7.')
+
+  await transport.terminateSession()
+  assert.strictEqual(transport.sessionId, undefined)
+
+  await client.close()
+  transport.close()
+})
+
+
+
+================================================
+FILE: tests/stdioToStatelessStreamableHttp.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, ChildProcess } from 'child_process'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+
+const PORT = 11005
+const MCP_URL = `http://localhost:${PORT}/mcp`
+
+let gatewayProc: ChildProcess
+
+test.before(() => {
+  gatewayProc = spawn(
+    'npm',
+    [
+      'run',
+      'start',
+      '--',
+      '--stdio',
+      'node tests/helpers/mock-mcp-server.js stdio',
+      '--outputTransport',
+      'streamableHttp',
+      '--port',
+      String(PORT),
+      '--streamableHttpPath',
+      '/mcp',
+    ],
+    { stdio: 'ignore', shell: false },
+  )
+  gatewayProc.unref()
+})
+
+test.after(async () => {
+  gatewayProc.kill('SIGINT')
+  await new Promise((resolve) => gatewayProc.once('exit', resolve))
+})
+
+test('stdioToStatelessStreamableHttp listTools and callTool', async () => {
+  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL))
+  const client = new Client({ name: 'stateless-test', version: '1.0.0' })
+  await new Promise((r) => setTimeout(r, 2000))
+  await client.connect(transport)
+
+  assert.strictEqual(transport.sessionId, undefined)
+
+  const { tools } = await client.listTools()
+  assert.ok(tools.some((t) => t.name === 'add'))
+
+  type Reply = { content: Array<{ text: string }> }
+  const reply1 = (await client.callTool({
+    name: 'add',
+    arguments: { a: 4, b: 5 },
+  })) as Reply
+
+  assert.strictEqual(reply1.content[0].text, 'The sum of 4 and 5 is 9.')
+
+  const reply2 = (await client.callTool({
+    name: 'add',
+    arguments: { a: 2, b: 7 },
+  })) as Reply
+
+  assert.strictEqual(reply2.content[0].text, 'The sum of 2 and 7 is 9.')
+
+  await client.close()
+  transport.close()
+})
+
+test('GET returns 405', async () => {
+  const res = await fetch(MCP_URL)
+  assert.strictEqual(res.status, 405)
+})
+
+
+
+================================================
+FILE: tests/streamableHttpCli.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import yargs from 'yargs'
+import { hideBin } from 'yargs/helpers'
+
+test('yargs parses streamableHttp outputTransport', () => {
+  const argv = yargs(
+    hideBin([
+      'node',
+      '',
+      '--stdio',
+      'true',
+      '--outputTransport',
+      'streamableHttp',
+    ]),
+  )
+    .option('stdio', { type: 'string' })
+    .option('outputTransport', {
+      type: 'string',
+      choices: ['stdio', 'sse', 'ws', 'streamableHttp'],
+    })
+    .parseSync()
+  assert.strictEqual(argv.outputTransport, 'streamableHttp')
+})
+
+
+
+================================================
+FILE: tests/streamableHttpToStdio.test.ts
+================================================
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, ChildProcess } from 'child_process'
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+
+const MCP_PORT = 11002
+const MCP_URL = `http://localhost:${MCP_PORT}/mcp`
+
+let serverProc: ChildProcess | undefined
+
+function spawnMcpServer(): Promise<ChildProcess> {
+  return new Promise((res, rej) => {
+    const proc = spawn(
+      'node',
+      ['tests/helpers/mock-mcp-server.js', 'streamableHttp'],
+      {
+        env: { ...process.env, PORT: String(MCP_PORT) },
+        shell: false,
+        stdio: ['inherit', 'pipe', 'inherit'],
+      },
+    )
+
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => {
+      if (chunk.includes('MCP Streamable HTTP Server listening')) {
+        res(proc)
+      }
+    })
+
+    proc.on('error', rej)
+  })
+}
+
+test.before(async () => {
+  serverProc = await spawnMcpServer()
+})
+
+test.after(() => serverProc?.kill('SIGINT'))
+
+test('streamableHttpToStdio listTools and callTool', async () => {
+  const gatewayCmd = ['npm', 'run', 'start', '--', '--streamableHttp', MCP_URL]
+
+  const transport = new StdioClientTransport({
+    command: gatewayCmd[0],
+    args: gatewayCmd.slice(1),
+  })
+
+  const client = new Client({ name: 'gateway-test', version: '1.0.0' })
+  await client.connect(transport)
+
+  const { tools } = await client.listTools()
+  assert.ok(tools.some((t) => t.name === 'add'))
+
+  type Reply = { content: Array<{ text: string }> }
+  const reply = (await client.callTool({
+    name: 'add',
+    arguments: { a: 2, b: 3 },
+  })) as Reply
+
+  assert.strictEqual(reply.content[0].text, 'The sum of 2 and 3 is 5.')
+  await client.close()
+})
+
+
+
+================================================
+FILE: tests/helpers/mock-mcp-server.js
+================================================
+import express from 'express'
+import { randomUUID } from 'node:crypto'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { z } from 'zod'
+
+const mode = process.argv[2]
+const port = Number(process.env.PORT || 3000)
+
+const server = new McpServer({ name: 'mock-server', version: '1.0.0' })
+
+server.tool('add', { a: z.number(), b: z.number() }, async ({ a, b }) => ({
+  content: [{ type: 'text', text: `The sum of ${a} and ${b} is ${a + b}.` }],
+}))
+
+if (mode === 'stdio') {
+  const transport = new StdioServerTransport()
+  await server.connect(transport)
+} else if (mode === 'sse') {
+  const app = express()
+  app.use(express.json())
+  const transports = {}
+
+  app.get('/sse', async (req, res) => {
+    const transport = new SSEServerTransport('/message', res)
+    const sid = transport.sessionId
+    transports[sid] = transport
+    transport.onclose = () => {
+      delete transports[sid]
+    }
+    await server.connect(transport)
+  })
+
+  app.post('/message', async (req, res) => {
+    const sessionId = req.query.sessionId
+    const transport = transports[sessionId]
+    if (!transport) {
+      res.status(404).send('Session not found')
+      return
+    }
+    await transport.handlePostMessage(req, res, req.body)
+  })
+
+  app.listen(port, () => {
+    console.log(`Server is running on port ${port}`)
+  })
+} else if (mode === 'streamableHttp') {
+  const app = express()
+  app.use(express.json())
+
+  const transports = {}
+
+  app.all('/mcp', async (req, res) => {
+    const sessionId = req.headers['mcp-session-id']
+    let transport = sessionId ? transports[sessionId] : undefined
+
+    if (!transport) {
+      if (req.method === 'POST' && req.body?.method === 'initialize') {
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            transports[sid] = transport
+          },
+        })
+        transport.onclose = () => {
+          const sid = transport.sessionId
+          if (sid) delete transports[sid]
+        }
+        await server.connect(transport)
+      } else {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Bad Request: Server not initialized',
+          },
+          id: null,
+        })
+        return
+      }
+    }
+
+    await transport.handleRequest(req, res, req.body)
+  })
+
+  app.listen(port, () => {
+    console.log(`MCP Streamable HTTP Server listening on port ${port}`)
+  })
+} else {
+  console.error('Unknown mode: ' + mode)
+  process.exit(1)
+}
+
+
+
+================================================
+FILE: .github/workflows/docker-publish.yaml
+================================================
+name: Publish Docker images
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+env:
+  GHCR_REGISTRY: ghcr.io/supercorp-ai
+  DOCKERHUB_REGISTRY: docker.io/supercorp
+
+jobs:
+  publish:
+    name: Build and push supergateway container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_REGISTRY }}/supergateway
+            ${{ env.DOCKERHUB_REGISTRY }}/supergateway
+          labels: |
+            org.opencontainers.image.title=Supergateway
+            org.opencontainers.image.version=${{ steps.ver.outputs.VERSION }}
+            org.opencontainers.image.source=${{ github.repository }}
+
+      - name: Build & push (Bake)
+        uses: docker/bake-action@v6
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+        with:
+          source: .
+          files: |
+            docker-bake.hcl
+            ${{ steps.docker_meta.outputs.bake-file }}
+          push: true
+          set: |
+            *.args.VERSION=${{ steps.ver.outputs.VERSION }}
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+
+
+
+================================================
+FILE: .husky/pre-commit
+================================================
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Ensure we're in the project directory
+GIT_ROOT=$(git rev-parse --show-toplevel)
+cd "$GIT_ROOT" || exit 1
+
+# Get staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|jsx|ts|tsx|json|css|scss|md|yaml|yml)$' || true)
+
+if [ -n "$STAGED_FILES" ]; then
+  echo "Formatting staged files before commit..."
+  # Use the installed Prettier to format only the staged files
+  ./node_modules/.bin/prettier --write --ignore-unknown $STAGED_FILES
+  # Re-add the formatted files to the staging area
+  git add $STAGED_FILES
+fi
+

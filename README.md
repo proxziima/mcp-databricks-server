@@ -163,7 +163,7 @@ For security best practices, consider regularly rotating your access tokens and 
 
 ## Running the Server
 
-### Standalone Mode
+### Standalone Mode (stdio)
 
 To run the server in standalone mode (e.g., for testing with Agent Composer):
 
@@ -172,6 +172,25 @@ python main.py
 ```
 
 This will start the MCP server using stdio transport, which can be used with Agent Composer or other MCP clients.
+
+### Remote Access with Streamable HTTP (Docker)
+
+To expose the server via Streamable HTTP for remote access:
+
+```bash
+docker build -t mcp-databricks-server .
+docker run -p 8000:8000 \
+  -e DATABRICKS_HOST="your-databricks-instance.cloud.databricks.com" \
+  -e DATABRICKS_TOKEN="your-databricks-access-token" \
+  -e DATABRICKS_SQL_WAREHOUSE_ID="your-sql-warehouse-id" \
+  mcp-databricks-server
+```
+
+The server will be available at `http://localhost:8000/mcp` using the Streamable HTTP transport protocol.
+
+**Key endpoints:**
+- Streamable HTTP: `http://localhost:8000/mcp`
+- Health check: `http://localhost:8000/health` or `http://localhost:8000/healthz`
 
 ### Using with Cursor
 
