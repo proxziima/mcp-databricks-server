@@ -1,17 +1,18 @@
 import json
 import os
+import sys
+import time
+from typing import Any, Dict, List
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.core import Config
 from databricks.sdk.service.catalog import (
-    TableInfo,
-    SchemaInfo,
-    ColumnInfo,
     CatalogInfo,
+    ColumnInfo,
+    SchemaInfo,
+    TableInfo,
 )
 from databricks.sdk.service.sql import StatementResponse, StatementState
-from typing import Dict, Any, List
-import os
-import json
-import time
-import sys
 from dotenv import load_dotenv
 
 # Load environment variables from .env file when the module is imported
@@ -55,7 +56,7 @@ def _format_column_details_md(columns: List[ColumnInfo]) -> List[str]:
         if not isinstance(col, ColumnInfo):
             print(
                 f"Warning: Encountered an unexpected item in columns list: {type(col)}. Skipping.",
-                file=sys.stderr
+                file=sys.stderr,
             )
             continue
         col_type = col.type_text or (
@@ -189,7 +190,7 @@ def _process_lineage_results(
     ):
         print(
             "Warning: Lineage query output is invalid or not successful. Returning empty lineage.",
-            file=sys.stderr
+            file=sys.stderr,
         )
         return processed_data
 
@@ -290,7 +291,7 @@ def clear_lineage_cache():
     global _job_cache, _notebook_cache
     _job_cache = {}
     _notebook_cache = {}
-    print("Cleared lineage caches")
+    print("Cleared lineage caches", file=sys.stderr)
 
 
 def _get_table_lineage(table_full_name: str) -> Dict[str, Any]:
@@ -311,7 +312,9 @@ def _get_table_lineage(table_full_name: str) -> Dict[str, Any]:
     WHERE source_table_full_name = '{table_full_name}' OR target_table_full_name = '{table_full_name}'
     ORDER BY event_time DESC LIMIT 100;
     """
-    print(f"Fetching and processing lineage for table: {table_full_name}")
+    print(
+        f"Fetching and processing lineage for table: {table_full_name}", file=sys.stderr
+    )
     # execute_databricks_sql will now use the global warehouse_id
     raw_lineage_output = execute_databricks_sql(lineage_sql_query, wait_timeout="50s")
     return _process_lineage_results(raw_lineage_output, table_full_name)
@@ -385,7 +388,8 @@ def execute_databricks_sql(sql_query: str, wait_timeout: str = "50s") -> Dict[st
     try:
         print(
             f"Executing SQL on warehouse {DATABRICKS_SQL_WAREHOUSE_ID} (timeout: {wait_timeout}):\n{sql_query[:200]}..."
-            + (" (truncated)" if len(sql_query) > 200 else "")
+            + (" (truncated)" if len(sql_query) > 200 else ""),
+            file=sys.stderr,
         )
         response: StatementResponse = sdk_client.statement_execution.execute_statement(
             statement=sql_query,
@@ -438,7 +442,7 @@ def get_uc_table_details(full_table_name: str, include_lineage: bool = False) ->
     Fetches table metadata and optionally lineage, then formats it into a Markdown string.
     Uses the _format_single_table_md helper for core table structure.
     """
-    print(f"Fetching metadata for {full_table_name}...")
+    print(f"Fetching metadata for {full_table_name}...", file=sys.stderr)
 
     try:
         table_info: TableInfo = sdk_client.tables.get(full_name=full_table_name)
@@ -463,7 +467,7 @@ def get_uc_table_details(full_table_name: str, include_lineage: bool = False) ->
                 "- *Lineage fetching skipped: `DATABRICKS_SQL_WAREHOUSE_ID` environment variable is not set.*"
             )
         else:
-            print(f"Fetching lineage for {full_table_name}...")
+            print(f"Fetching lineage for {full_table_name}...", file=sys.stderr)
             lineage_info = _get_table_lineage(full_table_name)
 
             has_upstream = (
@@ -572,7 +576,7 @@ def get_uc_schema_details(
     markdown_parts = [f"# Schema Details: **{full_schema_name}**"]
 
     try:
-        print(f"Fetching details for schema: {full_schema_name}...")
+        print(f"Fetching details for schema: {full_schema_name}...", file=sys.stderr)
         schema_info: SchemaInfo = sdk_client.schemas.get(full_name=full_schema_name)
 
         description = (
@@ -594,7 +598,8 @@ def get_uc_schema_details(
             for i, table_info in enumerate(tables_list):
                 if not isinstance(table_info, TableInfo):
                     print(
-                        f"Warning: Encountered an unexpected item in tables list: {type(table_info)}"
+                        f"Warning: Encountered an unexpected item in tables list: {type(table_info)}",
+                        file=sys.stderr,
                     )
                     continue
 
@@ -614,7 +619,7 @@ def get_uc_schema_details(
         error_message = (
             f"Failed to retrieve details for schema '{full_schema_name}': {str(e)}"
         )
-        print(f"Error in get_uc_schema_details: {error_message}")
+        print(f"Error in get_uc_schema_details: {error_message}", file=sys.stderr)
         return f"""# Error: Could Not Retrieve Schema Details
 **Schema:** `{full_schema_name}`
 **Problem:** An error occurred while attempting to fetch schema information.
@@ -636,7 +641,8 @@ def get_uc_catalog_details(catalog_name: str) -> str:
 
     try:
         print(
-            f"Fetching schemas for catalog: {catalog_name} using global sdk_client..."
+            f"Fetching schemas for catalog: {catalog_name} using global sdk_client...",
+            file=sys.stderr,
         )
         # The sdk_client is globally defined in this module
         schemas_iterable = sdk_client.schemas.list(catalog_name=catalog_name)
@@ -657,7 +663,8 @@ def get_uc_catalog_details(catalog_name: str) -> str:
         for i, schema_info in enumerate(schemas_list):
             if not isinstance(schema_info, SchemaInfo):
                 print(
-                    f"Warning: Encountered an unexpected item in schemas list: {type(schema_info)}"
+                    f"Warning: Encountered an unexpected item in schemas list: {type(schema_info)}",
+                    file=sys.stderr,
                 )
                 continue
 
@@ -682,7 +689,7 @@ def get_uc_catalog_details(catalog_name: str) -> str:
         error_message = (
             f"Failed to retrieve schemas for catalog '{catalog_name}': {str(e)}"
         )
-        print(f"Error in get_catalog_summary: {error_message}")
+        print(f"Error in get_catalog_summary: {error_message}", file=sys.stderr)
         # Return a structured error message in Markdown
         return f"""# Error: Could Not Retrieve Catalog Summary
 **Catalog:** `{catalog_name}`
@@ -707,7 +714,7 @@ def get_uc_all_catalogs_summary() -> str:
     catalogs_found_count = 0
 
     try:
-        print("Fetching all catalogs using global sdk_client...")
+        print("Fetching all catalogs using global sdk_client...", file=sys.stderr)
         catalogs_iterable = sdk_client.catalogs.list()
         catalogs_list = list(catalogs_iterable)
 
@@ -722,7 +729,8 @@ def get_uc_all_catalogs_summary() -> str:
         for catalog_info in catalogs_list:
             if not isinstance(catalog_info, CatalogInfo):
                 print(
-                    f"Warning: Encountered an unexpected item in catalogs list: {type(catalog_info)}"
+                    f"Warning: Encountered an unexpected item in catalogs list: {type(catalog_info)}",
+                    file=sys.stderr,
                 )
                 continue
 
@@ -746,16 +754,10 @@ def get_uc_all_catalogs_summary() -> str:
             markdown_parts.append(f"  - **Type**: `{catalog_type_str}`")
 
             markdown_parts.append("")  # Add a blank line for separation
-                catalog_type_str = catalog_info.catalog_type.value
-            elif catalog_info.catalog_type: # Fallback if it's not an Enum but has a direct string representation
-                catalog_type_str = str(catalog_info.catalog_type)
-            markdown_parts.append(f"  - **Type**: `{catalog_type_str}`")
-
-            markdown_parts.append("") # Add a blank line for separation
 
     except Exception as e:
         error_message = f"Failed to retrieve catalog list: {str(e)}"
-        print(f"Error in get_uc_all_catalogs_summary: {error_message}")
+        print(f"Error in get_uc_all_catalogs_summary: {error_message}", file=sys.stderr)
         return f"""# Error: Could Not Retrieve Catalog List
 **Problem:** An error occurred while attempting to fetch the list of catalogs.
 **Details:**
